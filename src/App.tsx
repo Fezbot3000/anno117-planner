@@ -103,6 +103,7 @@ function StepCard({ buildingId, count, isShared }: { buildingId: string; count: 
 // ── Chain detail panel ─────────────────────────────────────────────────────
 function ChainDetail({ chain, onClose }: { chain: ProductionChain; onClose: () => void }) {
   const [showTips, setShowTips] = useState(false);
+  const [multiplier, setMultiplier] = useState(1);
 
   const totalCosts = useMemo(() => {
     let denarii = 0, workforce = 0, planks = 0, tiles = 0;
@@ -153,6 +154,34 @@ function ChainDetail({ chain, onClose }: { chain: ProductionChain; onClose: () =
           </p>
         </div>
 
+        {/* ── Multiplier ── */}
+        <div className="flex items-center gap-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-white/30">Scale</p>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMultiplier(m => Math.max(1, m - 1))}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.06] border border-white/10 text-white/60 hover:text-white hover:bg-white/12 transition-all text-lg font-bold"
+            >
+              −
+            </button>
+            <span className="min-w-[2.5rem] text-center text-xl font-black text-white">{multiplier}×</span>
+            <button
+              onClick={() => setMultiplier(m => m + 1)}
+              className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.06] border border-white/10 text-white/60 hover:text-white hover:bg-white/12 transition-all text-lg font-bold"
+            >
+              +
+            </button>
+          </div>
+          {multiplier > 1 && (
+            <button
+              onClick={() => setMultiplier(1)}
+              className="text-xs text-white/30 hover:text-white/60 transition-colors"
+            >
+              reset
+            </button>
+          )}
+        </div>
+
         {/* ── The chain flow — hero section ── */}
         <div>
           <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-5">How to build it</p>
@@ -161,7 +190,7 @@ function ChainDetail({ chain, onClose }: { chain: ProductionChain; onClose: () =
               <div key={buildingId} className="flex items-center gap-3">
                 <StepCard
                   buildingId={buildingId}
-                  count={count}
+                  count={count * multiplier}
                   isShared={!!chain.sharedBuildings?.includes(buildingId)}
                 />
                 {idx < chain.steps.length - 1 && (
@@ -203,10 +232,10 @@ function ChainDetail({ chain, onClose }: { chain: ProductionChain; onClose: () =
           <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-4">What it costs to run</p>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {[
-              { label: 'Upkeep per minute', value: `-${totalCosts.denarii}`, unit: 'denarii', color: 'text-yellow-300' },
-              { label: 'Workers needed', value: totalCosts.workforce, unit: 'people', color: 'text-blue-300' },
-              { label: 'To build — planks', value: totalCosts.planks, unit: 'planks', color: 'text-green-300' },
-              { label: 'To build — tiles', value: totalCosts.tiles, unit: 'tiles', color: 'text-orange-300' },
+              { label: 'Upkeep per minute', value: `-${totalCosts.denarii * multiplier}`, unit: 'denarii', color: 'text-yellow-300' },
+              { label: 'Workers needed', value: totalCosts.workforce * multiplier, unit: 'people', color: 'text-blue-300' },
+              { label: 'To build — planks', value: totalCosts.planks * multiplier, unit: 'planks', color: 'text-green-300' },
+              { label: 'To build — tiles', value: totalCosts.tiles * multiplier, unit: 'tiles', color: 'text-orange-300' },
             ].map(({ label, value, color }) => (
               <div key={label} className="bg-white/[0.04] border border-white/8 rounded-xl p-4">
                 <p className={`text-2xl font-bold ${color}`}>{value}</p>

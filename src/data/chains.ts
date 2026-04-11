@@ -130,11 +130,11 @@ export const CHAINS: Record<string, ProductionChain> = {
   },
   // ── LATIUM EQUITES ─────────────────────────────────────────────────────
   oliveOil: {
-    id: 'oliveOil', name: 'Olive Oil', region: 'latium', tier: 'equites', outputGood: 'oliveOil',
+    id: 'oliveOil', name: 'Olive Oil', region: 'latium', tier: 'plebeians', outputGood: 'oliveOil',
     steps: [{ buildingId: 'oliveGrower', count: 4 }, { buildingId: 'olivePress', count: 3 }],
     optimalRatio: '4 Olive Growers → 3 Olive Presses',
     totalBuildingCount: 7,
-    placementSummary: 'Group olive groves together. Presses near Equites housing. 4:3 due to grower (45s) vs press (60s).',
+    placementSummary: 'Group olive groves together. Presses near Plebeians housing. 4:3 due to grower (45s) vs press (60s).',
   },
   wine: {
     id: 'wine', name: 'Wine', region: 'both', tier: 'equites', outputGood: 'wine',

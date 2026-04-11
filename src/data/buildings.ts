@@ -400,7 +400,7 @@ export const BUILDINGS: Record<string, Building> = {
     placementTips: ['Must be near forest', '2 Resin Tappers per 1 Clay Pit for Amphorae'],
   },
   oliveGrower: {
-    id: 'oliveGrower', name: 'Olive Grower', region: 'latium', tier: 'equites',
+    id: 'oliveGrower', name: 'Olive Grower', region: 'latium', tier: 'plebeians',
     productionTimeSec: 45, output: 'olives',
     inputs: [],
     constructionCost: { planks: 4 },
@@ -409,12 +409,12 @@ export const BUILDINGS: Record<string, Building> = {
     placementTips: ['4 Olive Growers feed 3 Olive Presses (grower 45s, press 60s)'],
   },
   olivePress: {
-    id: 'olivePress', name: 'Olive Press', region: 'latium', tier: 'equites',
+    id: 'olivePress', name: 'Olive Press', region: 'latium', tier: 'plebeians',
     productionTimeSec: 60, output: 'oliveOil',
     inputs: [{ resource: 'olives', amount: 1 }],
     constructionCost: { planks: 5, tiles: 3 },
     maintenanceCost: { denarii: 8, workforce: 5 },
-    placementTips: ['3 Olive Presses per 4 Olive Growers', 'Place near Equites residences'],
+    placementTips: ['3 Olive Presses per 4 Olive Growers', 'Place near Plebeians residences'],
   },
   apiary: {
     id: 'apiary', name: 'Apiary', region: 'latium', tier: 'equites',
