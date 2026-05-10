@@ -100,11 +100,11 @@ export function PopulationView() {
     return list;
   }, [productDemand, region]);
 
-  // Aggregate global totals
-  const globals = useMemo(() => {
+  // What the SUGGESTED plan calls for (driven by population needs). This is
+  // the "you should build" view — independent of what the user has actually
+  // placed.
+  const suggested = useMemo(() => {
     const factoryCounts: Record<number, number> = {};
-    let denarii = 0;
-    const workforce: Partial<Record<TierId, number>> = {};
     const fertilities = new Set<number>();
     for (const c of chains) {
       if (!c.tree) continue;
@@ -112,22 +112,32 @@ export function PopulationView() {
       for (const [g, n] of Object.entries(totals.factoryCounts)) {
         factoryCounts[+g] = (factoryCounts[+g] ?? 0) + (n as number);
       }
-      // Recompute workforce/upkeep using *summed* fractional counts later — we
-      // don't double-bill upkeep here; do it after merging.
       for (const f of totals.fertilities) fertilities.add(f);
     }
     let totalBuildings = 0;
-    for (const [g, n] of Object.entries(factoryCounts)) {
+    for (const n of Object.values(factoryCounts)) totalBuildings += wholeBuildings(n);
+    return { factoryCounts, totalBuildings, fertilities };
+  }, [chains]);
+
+  // What's ACTUALLY built (suggested + any custom buildings the user added,
+  // e.g. lumber camps, brickworks, military). Drives the workforce balance
+  // and current upkeep — because a building that isn't placed isn't employing
+  // anyone or costing denarii.
+  const current = useMemo(() => {
+    const workforce: Partial<Record<TierId, number>> = {};
+    let denarii = 0;
+    let totalBuilt = 0;
+    for (const [g, n] of Object.entries(state.built)) {
       const f = FACTORIES[+g];
-      const whole = wholeBuildings(n);
-      totalBuildings += whole;
-      denarii += f.denarii * whole;
+      if (!f || n <= 0) continue;
+      totalBuilt += n;
+      denarii += f.denarii * n;
       if (f.workforceTier) {
-        workforce[f.workforceTier] = (workforce[f.workforceTier] ?? 0) + f.workforceAmount * whole;
+        workforce[f.workforceTier] = (workforce[f.workforceTier] ?? 0) + f.workforceAmount * n;
       }
     }
-    return { factoryCounts, totalBuildings, denarii, workforce, fertilities };
-  }, [chains]);
+    return { workforce, denarii, totalBuilt };
+  }, [state.built]);
 
   // Workforce supply from this population
   const workforceSupply = useMemo(() => {
@@ -149,7 +159,7 @@ export function PopulationView() {
   const workforceShortages = TIER_ORDER.filter(t => {
     if (!tierIds.includes(t)) return false;
     const supply = workforceSupply[t] ?? 0;
-    const demand = globals.workforce[t] ?? 0;
+    const demand = current.workforce[t] ?? 0;
     return demand > supply && demand > 0;
   });
 
@@ -158,7 +168,7 @@ export function PopulationView() {
   const remainingByFactory: Record<number, number> = {};
   let totalRemaining = 0;
   let totalNeeded = 0;
-  for (const [g, count] of Object.entries(globals.factoryCounts)) {
+  for (const [g, count] of Object.entries(suggested.factoryCounts)) {
     const needed = wholeBuildings(count as number);
     const built = state.built[+g] ?? 0;
     const remaining = Math.max(0, needed - built);
@@ -200,9 +210,45 @@ export function PopulationView() {
               Population per tier
             </p>
             <div className="space-y-2">
-              {tierIds.map(t => {
+              {tierIds.map((t, idx) => {
                 const tier = TIERS[t];
                 const pop = state.populations[t] ?? 0;
+                // TRADE-OFF: real Anno 117 unlock thresholds (e.g. "Plebeians
+                // unlock at 200 Liberti residents") are NOT in the data dump
+                // — params.js only stores tier GUIDs, not population gates.
+                // Rather than fabricate wiki numbers, we gate purely on
+                // structure: tier N+1 unlocks once tier N has any residents.
+                // The user can override at any time by clicking the lock.
+                // Lock rule: a tier is locked iff the immediately-prior tier
+                // has pop=0 AND this tier has pop=0. So setting Liberti to >0
+                // reveals Plebeians; setting Plebeians to >0 reveals Equites;
+                // etc. Setting this tier to >0 (self-engage) keeps it
+                // unlocked so reducing earlier tiers doesn't yank away
+                // numbers you'd already entered.
+                const prevTier = idx > 0 ? tierIds[idx - 1] : null;
+                const prevPop = prevTier ? (state.populations[prevTier] ?? 0) : 1;
+                const locked = idx > 0 && pop === 0 && prevPop === 0;
+                if (locked) {
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => update({ populations: { ...state.populations, [t]: 1 } })}
+                      className="w-full bg-white/[0.02] border border-dashed border-white/10 rounded-xl p-3 text-left hover:border-white/25 hover:bg-white/[0.04] transition-colors group"
+                      title={`Reach the ${TIERS[prevTier!].name} tier first, or click to unlock manually.`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full bg-white/15`} />
+                        <span className="text-sm font-semibold text-white/35 group-hover:text-white/60">{tier.name}</span>
+                        <span className="ml-auto text-[10px] text-white/25 group-hover:text-white/40">
+                          🔒 unlock manually
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-white/25 mt-1.5 leading-snug">
+                        Reach {TIERS[prevTier!].name} first, or tap to reveal.
+                      </p>
+                    </button>
+                  );
+                }
                 return (
                   <div key={t} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
                     <div className="flex items-center gap-2 mb-2">
@@ -226,6 +272,11 @@ export function PopulationView() {
                 );
               })}
             </div>
+            <p className="text-[10px] text-white/25 mt-2 leading-snug">
+              Higher tiers unlock as you start populating the previous one. Real in-game
+              thresholds aren't in our data, so this gates structurally — click any
+              locked tier to reveal it manually.
+            </p>
           </div>
         </div>
       </aside>
@@ -255,7 +306,7 @@ export function PopulationView() {
                   )}
                 </h2>
                 <p className="text-sm text-white/40 mt-1">
-                  {totalNeeded - totalRemaining} of {totalNeeded} built · {totalResidences} houses · -{globals.denarii.toLocaleString()} denarii/min upkeep when running
+                  {totalNeeded - totalRemaining} of {totalNeeded} built · {totalResidences} houses · -{current.denarii.toLocaleString()} denarii/min upkeep right now
                 </p>
               </div>
               {Object.keys(state.built).length > 0 && (
@@ -268,6 +319,47 @@ export function PopulationView() {
               )}
             </header>
 
+            {/* Workforce balance — always shown so the user can see their
+                current situation. Supply = population × tier factor (e.g.
+                Liberti 0.5). Demand = sum across BUILT factories' workforce
+                requirements (so empty until they tick something). */}
+            <section>
+              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
+                Workforce balance
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {tierIds.filter(t => (state.populations[t] ?? 0) > 0).map(t => {
+                  const supply = workforceSupply[t] ?? 0;
+                  const demand = current.workforce[t] ?? 0;
+                  const ok = supply >= demand;
+                  const ratio = demand === 0 ? 0 : Math.min(supply / demand, 1);
+                  return (
+                    <div key={t} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`w-2 h-2 rounded-full ${TIER_DOT[t]}`} />
+                        <span className={`text-sm font-semibold ${TIER_TEXT[t]}`}>{TIERS[t].name}</span>
+                        <span className={`ml-auto text-xs font-bold tabular-nums ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>
+                          {supply} / {demand || '–'}
+                          {!ok && demand > 0 && <AlertTriangle size={11} className="inline ml-1 -mt-0.5" />}
+                        </span>
+                      </div>
+                      <div className="h-1.5 bg-white/5 rounded overflow-hidden">
+                        <div
+                          className={`h-full transition-all ${ok ? 'bg-emerald-400/70' : 'bg-rose-400/70'}`}
+                          style={{ width: `${(demand === 0 ? 1 : ratio) * 100}%` }}
+                        />
+                      </div>
+                      <p className="mt-1.5 text-[11px] text-white/40">
+                        {demand === 0
+                          ? `${supply.toLocaleString()} workers free, no buildings placed yet`
+                          : `${supply.toLocaleString()} workers, ${demand.toLocaleString()} employed by buildings you've placed`}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
             {/* Issues banner — only shown when something needs attention */}
             {(workforceShortages.length > 0 || imports.length > 0) && (
               <section className="bg-rose-500/8 border border-rose-400/30 rounded-2xl p-4 space-y-2">
@@ -277,7 +369,7 @@ export function PopulationView() {
                 </p>
                 {workforceShortages.map(t => {
                   const supply = workforceSupply[t] ?? 0;
-                  const demand = globals.workforce[t] ?? 0;
+                  const demand = current.workforce[t] ?? 0;
                   return (
                     <p key={t} className="text-sm text-white/80">
                       <span className={`font-semibold ${TIER_TEXT[t]}`}>{TIERS[t].name}</span> shortage:
@@ -303,8 +395,8 @@ export function PopulationView() {
               </p>
               <div className="space-y-4">
                 {(['(infra)', ...TIER_ORDER] as const).map(t => {
-                  const tierFactories = Object.entries(globals.factoryCounts)
-                    .map(([g, count]) => ({ factory: FACTORIES[+g], count }))
+                  const tierFactories = Object.entries(suggested.factoryCounts)
+                    .map(([g, count]) => ({ factory: FACTORIES[+g], count: count as number }))
                     .filter(({ factory }) => {
                       if (t === '(infra)') return !factory.workforceTier;
                       return factory.workforceTier === t;
@@ -341,6 +433,18 @@ export function PopulationView() {
               </div>
             </section>
 
+            {/* Other buildings the user is tracking that aren't part of the
+                population-driven suggested plan: lumber camps, brickworks,
+                military, decoration, etc. They still count toward workforce
+                demand and upkeep. */}
+            <CustomBuildingsSection
+              region={region}
+              built={state.built}
+              suggestedGuids={new Set(Object.keys(suggested.factoryCounts).map(Number))}
+              unlockedTiers={new Set(tierIds.filter(t => (state.populations[t] ?? 0) > 0))}
+              onSetBuilt={setBuilt}
+            />
+
             {/* Drill-down: per-tier consumption with the only useful interactive
                 control (toggle individual needs off/on). Closed by default so the
                 primary view is simply "what to build". */}
@@ -375,13 +479,13 @@ export function PopulationView() {
               </div>
             </details>
 
-            {globals.fertilities.size > 0 && (
+            {suggested.fertilities.size > 0 && (
               <section>
                 <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
                   Required deposits / fertilities
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {[...globals.fertilities].map(g => {
+                  {[...suggested.fertilities].map(g => {
                     const f = FERTILITIES[g];
                     if (!f) return null;
                     return (
@@ -481,6 +585,141 @@ function TierCard({
 }
 
 /**
+ * Section listing buildings the user has placed that aren't part of the
+ * population-driven suggested plan — typically construction-material chains
+ * (lumber, bricks, marble), defense, or anything else they want to factor
+ * into workforce/upkeep totals. Includes a searchable picker to add more.
+ */
+function CustomBuildingsSection({
+  region, built, suggestedGuids, unlockedTiers, onSetBuilt,
+}: {
+  region: RegionId;
+  built: Record<number, number>;
+  suggestedGuids: Set<number>;
+  /** Tiers with pop > 0 — used to gate which workforce-tied buildings can be added. */
+  unlockedTiers: Set<TierId>;
+  onSetBuilt: (factoryGuid: number, count: number) => void;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [query, setQuery] = useState('');
+
+  // Factories the user has actually placed but that aren't on the suggested list.
+  const customGuids = Object.keys(built)
+    .map(Number)
+    .filter(g => !suggestedGuids.has(g) && (built[g] ?? 0) > 0);
+
+  // Available factories to add: every factory in this region that isn't
+  // already on the suggested list and isn't already in custom.
+  const trackedSet = new Set([...suggestedGuids, ...customGuids]);
+  const candidates = Object.values(FACTORIES)
+    .filter(f => f.regions.includes(region) && !trackedSet.has(f.guid))
+    // Progressive disclosure: hide factories that need a workforce tier the
+    // user hasn't reached yet. Infrastructure (no workforce tier) always
+    // shows — it's available from the start.
+    .filter(f => !f.workforceTier || unlockedTiers.has(f.workforceTier))
+    .filter(f => !query || f.name.toLowerCase().includes(query.toLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // Group customs by tier
+  const byTier: Record<string, number[]> = {};
+  for (const g of customGuids) {
+    const f = FACTORIES[g];
+    const key = f.workforceTier ?? '(infra)';
+    (byTier[key] ??= []).push(g);
+  }
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-white/30">
+          Other buildings I've placed
+        </p>
+        <button
+          onClick={() => { setPicking(p => !p); setQuery(''); }}
+          className="text-xs px-2.5 py-1 rounded-lg border border-white/15 text-white/60 hover:text-white hover:border-white/40 transition-colors"
+        >
+          {picking ? 'Cancel' : '+ Add building'}
+        </button>
+      </div>
+
+      {picking && (
+        <div className="mb-3 bg-white/[0.04] border border-white/10 rounded-xl p-3">
+          <input
+            autoFocus
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search lumber, bricks, marble, military…"
+            className="w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-white/30 mb-2"
+          />
+          <div className="max-h-64 overflow-y-auto space-y-0.5">
+            {candidates.length === 0 ? (
+              <p className="text-xs text-white/35 p-2">No matching factories.</p>
+            ) : candidates.slice(0, 80).map(f => (
+              <button
+                key={f.guid}
+                onClick={() => { onSetBuilt(f.guid, 1); setPicking(false); setQuery(''); }}
+                className="w-full text-left px-2 py-1.5 rounded text-sm hover:bg-white/5 flex items-center gap-2 text-white/80"
+              >
+                <span className="flex-1 truncate">{f.name}</span>
+                {f.workforceTier && (
+                  <span className={`text-[10px] ${TIER_TEXT[f.workforceTier]}`}>
+                    {TIERS[f.workforceTier].name} ×{f.workforceAmount}
+                  </span>
+                )}
+                {f.fertility && FERTILITIES[f.fertility] && (
+                  <span className="text-[10px] text-amber-300/80">
+                    {FERTILITIES[f.fertility].name}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {customGuids.length === 0 && !picking && (
+        <p className="text-xs text-white/30 italic">
+          Nothing tracked here yet. Add lumber camps, brickworks, defenses, or anything else
+          you've built that isn't driven by your residents' needs — they'll count toward your
+          workforce demand and upkeep.
+        </p>
+      )}
+
+      {customGuids.length > 0 && (
+        <div className="space-y-4">
+          {(['(infra)', ...TIER_ORDER] as const).map(t => {
+            const guids = byTier[t];
+            if (!guids?.length) return null;
+            const label = t === '(infra)' ? 'Infrastructure' : TIERS[t].name;
+            const colorText = t === '(infra)' ? 'text-stone-300' : TIER_TEXT[t];
+            const colorDot = t === '(infra)' ? 'bg-stone-400' : TIER_DOT[t];
+            return (
+              <div key={t}>
+                <p className={`text-[11px] font-bold uppercase tracking-widest mb-1.5 flex items-center gap-2 ${colorText}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${colorDot}`} />
+                  {label} workforce
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                  {guids.map(g => (
+                    <BuildingRow
+                      key={g}
+                      factoryGuid={g}
+                      needed={0}
+                      built={built[g] ?? 0}
+                      onSetBuilt={(v) => onSetBuilt(g, v)}
+                    />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
  * One row in the buildings list. Click the count to mark all built; use the
  * +/− steppers for partial progress (e.g. "I've built 1 of 3 Salt Ponds").
  * Once `built >= needed` the row is dimmed and struck through so it falls
@@ -490,13 +729,15 @@ function BuildingRow({
   factoryGuid, needed, built, onSetBuilt,
 }: {
   factoryGuid: number;
+  /** 0 means "no target — this is a custom-tracked building". */
   needed: number;
   built: number;
   onSetBuilt: (next: number) => void;
 }) {
   const factory = FACTORIES[factoryGuid];
   const fert = factory.fertility ? FERTILITIES[factory.fertility] : null;
-  const done = built >= needed;
+  const hasTarget = needed > 0;
+  const done = hasTarget && built >= needed;
   return (
     <div
       className={`group rounded-lg border flex items-center gap-2 px-2 py-1.5 transition-colors ${
@@ -506,15 +747,18 @@ function BuildingRow({
       }`}
     >
       <button
-        onClick={() => onSetBuilt(done ? 0 : needed)}
-        title={done ? 'Mark as not built' : 'Mark all built'}
+        onClick={() => {
+          if (hasTarget) onSetBuilt(done ? 0 : needed);
+          else onSetBuilt(built === 0 ? 1 : 0);
+        }}
+        title={hasTarget ? (done ? 'Mark as not built' : 'Mark all built') : (built > 0 ? 'Remove' : 'Add one')}
         className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center transition-colors ${
-          done
+          done || (!hasTarget && built > 0)
             ? 'bg-emerald-400/20 border-emerald-400/40 text-emerald-200'
             : 'border-white/15 text-white/30 hover:text-white hover:border-white/40'
         }`}
       >
-        {done ? '✓' : ''}
+        {done || (!hasTarget && built > 0) ? '✓' : ''}
       </button>
       <div className="flex-1 min-w-0">
         <p className={`text-sm truncate leading-tight ${done ? 'line-through text-white/35' : 'text-white'}`}>
@@ -534,7 +778,7 @@ function BuildingRow({
           className="w-5 h-5 rounded text-white/30 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed text-sm leading-none"
         >−</button>
         <span className={`text-sm font-bold tabular-nums w-12 text-center ${done ? 'text-emerald-300' : 'text-white'}`}>
-          {built}/{needed}
+          {hasTarget ? `${built}/${needed}` : built}
         </span>
         <button
           onClick={() => onSetBuilt(built + 1)}
