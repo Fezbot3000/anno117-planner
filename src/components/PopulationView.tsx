@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Users, Coins, Home, Factory as FactoryIcon, MapPin, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
+import { Users, MapPin, AlertTriangle, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   PRODUCTS, FERTILITIES, FACTORIES, TIERS,
   type RegionId, type TierId,
@@ -28,12 +28,15 @@ interface PopState {
   region: RegionId;
   populations: Partial<Record<TierId, number>>;
   disabled: Partial<Record<TierId, number[]>>;
+  /** Per-factory count of "I've already built this many in the game". */
+  built: Record<number, number>;
 }
 
 const DEFAULT_STATE: PopState = {
   region: 'latium',
   populations: { liberti: 200, plebeians: 0 },
   disabled: {},
+  built: {},
 };
 
 function loadState(): PopState {
@@ -140,6 +143,37 @@ export function PopulationView() {
   const totalResidences = breakdowns.reduce((s, b) => s + b.residencesNeeded, 0);
   const totalActualPopulation = breakdowns.reduce((s, b) => s + b.actualPopulation, 0);
 
+  /** Goods that can't be made in this region — must be imported. */
+  const imports = chains.filter(c => !c.tree);
+  /** Tiers where industry needs more workers than residents can supply. */
+  const workforceShortages = TIER_ORDER.filter(t => {
+    if (!tierIds.includes(t)) return false;
+    const supply = workforceSupply[t] ?? 0;
+    const demand = globals.workforce[t] ?? 0;
+    return demand > supply && demand > 0;
+  });
+
+  /** How many of each factory the user still needs to construct. Negative
+   *  numbers (over-built) clamp to 0 so the headline stays accurate. */
+  const remainingByFactory: Record<number, number> = {};
+  let totalRemaining = 0;
+  let totalNeeded = 0;
+  for (const [g, count] of Object.entries(globals.factoryCounts)) {
+    const needed = wholeBuildings(count as number);
+    const built = state.built[+g] ?? 0;
+    const remaining = Math.max(0, needed - built);
+    remainingByFactory[+g] = remaining;
+    totalRemaining += remaining;
+    totalNeeded += needed;
+  }
+
+  const setBuilt = (factoryGuid: number, count: number) => {
+    const next = { ...state.built };
+    if (count <= 0) delete next[factoryGuid];
+    else next[factoryGuid] = count;
+    update({ built: next });
+  };
+
   return (
     <div className="flex flex-1 overflow-hidden">
       <aside className="w-80 shrink-0 flex flex-col border-r border-white/8 bg-[#11131a] overflow-y-auto">
@@ -207,96 +241,99 @@ export function PopulationView() {
             </p>
           </div>
         ) : (
-          <div className="p-8 space-y-8">
-            <header>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30">
-                {region === 'latium' ? 'Latium' : 'Albion'} economy plan
-              </p>
-              <h2 className="text-4xl font-black text-white tracking-tight mt-1">
-                {totalActualPopulation.toLocaleString()} residents
-              </h2>
-              <p className="text-sm text-white/40 mt-1">
-                Across {totalResidences} residence{totalResidences === 1 ? '' : 's'}, satisfying every basic need at standard consumption.
-              </p>
+          <div className="p-8 space-y-6 max-w-5xl">
+            <header className="flex items-end justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold uppercase tracking-widest text-white/30">
+                  To support {totalActualPopulation.toLocaleString()} residents in {region === 'latium' ? 'Latium' : 'Albion'}, you still need:
+                </p>
+                <h2 className="text-4xl font-black text-white tracking-tight mt-1 tabular-nums">
+                  {totalRemaining === 0 ? (
+                    <span className="text-emerald-300">All built ✓</span>
+                  ) : (
+                    <>{totalRemaining} more building{totalRemaining === 1 ? '' : 's'}</>
+                  )}
+                </h2>
+                <p className="text-sm text-white/40 mt-1">
+                  {totalNeeded - totalRemaining} of {totalNeeded} built · {totalResidences} houses · -{globals.denarii.toLocaleString()} denarii/min upkeep when running
+                </p>
+              </div>
+              {Object.keys(state.built).length > 0 && (
+                <button
+                  onClick={() => update({ built: {} })}
+                  className="text-xs text-white/35 hover:text-rose-300 transition-colors px-3 py-1.5 rounded-lg border border-white/10 hover:border-rose-400/40 shrink-0"
+                >
+                  Reset progress
+                </button>
+              )}
             </header>
 
-            <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Stat icon={<Home size={14} />} label="Houses" value={totalResidences.toLocaleString()} color="text-white" />
-              <Stat icon={<FactoryIcon size={14} />} label="Production buildings" value={globals.totalBuildings.toLocaleString()} color="text-white" />
-              <Stat icon={<Coins size={14} />} label="Production upkeep" value={`-${globals.denarii.toLocaleString()}`} unit="/min" color="text-yellow-300" />
-              <Stat icon={<MapPin size={14} />} label="Deposits required" value={String(globals.fertilities.size)} color="text-amber-200" />
-            </section>
-
-            {/* Workforce balance */}
-            <section>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                Workforce balance
-              </p>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                {TIER_ORDER.filter(t => tierIds.includes(t)).map(t => {
+            {/* Issues banner — only shown when something needs attention */}
+            {(workforceShortages.length > 0 || imports.length > 0) && (
+              <section className="bg-rose-500/8 border border-rose-400/30 rounded-2xl p-4 space-y-2">
+                <p className="text-xs font-bold uppercase tracking-widest text-rose-200 flex items-center gap-2">
+                  <AlertTriangle size={12} />
+                  Issues to resolve
+                </p>
+                {workforceShortages.map(t => {
                   const supply = workforceSupply[t] ?? 0;
                   const demand = globals.workforce[t] ?? 0;
-                  if (supply === 0 && demand === 0) return null;
-                  const ok = supply >= demand;
-                  const ratio = demand === 0 ? 1 : Math.min(supply / demand, 1);
                   return (
-                    <div key={t} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <span className={`w-2 h-2 rounded-full ${TIER_DOT[t]}`} />
-                        <span className={`text-sm font-semibold ${TIER_TEXT[t]}`}>{TIERS[t].name}</span>
-                        <span className={`ml-auto text-xs font-bold tabular-nums ${ok ? 'text-emerald-300' : 'text-rose-300'}`}>
-                          {supply} / {demand}
-                          {!ok && <AlertTriangle size={11} className="inline ml-1 -mt-0.5" />}
-                        </span>
-                      </div>
-                      <div className="h-1.5 bg-white/5 rounded overflow-hidden">
-                        <div
-                          className={`h-full transition-all ${ok ? 'bg-emerald-400/70' : 'bg-rose-400/70'}`}
-                          style={{ width: `${ratio * 100}%` }}
-                        />
-                      </div>
-                      <p className="mt-1.5 text-[11px] text-white/40">
-                        {supply.toLocaleString()} workers available, {demand.toLocaleString()} required by industry
+                    <p key={t} className="text-sm text-white/80">
+                      <span className={`font-semibold ${TIER_TEXT[t]}`}>{TIERS[t].name}</span> shortage:
+                      industry needs {demand} workers, you only have {supply}. Add {demand - supply} more or reduce production.
+                    </p>
+                  );
+                })}
+                {imports.map(c => (
+                  <p key={c.product} className="text-sm text-white/80">
+                    <span className="font-semibold text-rose-200">{PRODUCTS[c.product]?.name}</span> can't be made in {region}
+                    — import {c.demand.toFixed(2)} t/min via trade route.
+                  </p>
+                ))}
+              </section>
+            )}
+
+            {/* The single primary answer: every factory across every chain,
+                deduped (shared inputs like Salt summed once), grouped by which
+                tier of worker can run it — i.e. by what you can build first. */}
+            <section>
+              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
+                Buildings, by who staffs them
+              </p>
+              <div className="space-y-4">
+                {(['(infra)', ...TIER_ORDER] as const).map(t => {
+                  const tierFactories = Object.entries(globals.factoryCounts)
+                    .map(([g, count]) => ({ factory: FACTORIES[+g], count }))
+                    .filter(({ factory }) => {
+                      if (t === '(infra)') return !factory.workforceTier;
+                      return factory.workforceTier === t;
+                    });
+                  if (tierFactories.length === 0) return null;
+                  tierFactories.sort((a, b) => b.count - a.count);
+                  const label = t === '(infra)' ? 'Infrastructure' : TIERS[t].name;
+                  const colorText = t === '(infra)' ? 'text-stone-300' : TIER_TEXT[t];
+                  const colorDot = t === '(infra)' ? 'bg-stone-400' : TIER_DOT[t];
+                  return (
+                    <div key={t}>
+                      <p className={`text-[11px] font-bold uppercase tracking-widest mb-1.5 flex items-center gap-2 ${colorText}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${colorDot}`} />
+                        {label} workforce
                       </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Production by good */}
-            <section>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                Production required by good
-              </p>
-              <div className="space-y-2">
-                {chains.map(c => {
-                  const product = PRODUCTS[c.product];
-                  if (!c.tree) {
-                    return (
-                      <div key={c.product} className="bg-rose-500/5 border border-rose-400/30 rounded-xl p-3 text-sm">
-                        <span className="font-semibold text-rose-200">{product?.name ?? '?'}</span>
-                        <span className="text-rose-300/70 ml-2">— no producer in {region}, must import {c.demand.toFixed(2)} t/min</span>
-                      </div>
-                    );
-                  }
-                  const totals = totalsForChain(c.tree);
-                  const buildings = Object.values(totals.factoryCounts)
-                    .reduce<number>((s, n) => s + wholeBuildings(n as number), 0);
-                  const root = c.tree.factory;
-                  return (
-                    <div key={c.product} className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-white">{product.name}</p>
-                          <p className="text-xs text-white/40 mt-0.5">
-                            {c.demand.toFixed(2)} t/min · {buildings} building{buildings === 1 ? '' : 's'} · -{totals.denariiPerMin}/min
-                          </p>
-                        </div>
-                        <span className="text-2xl font-bold text-white tabular-nums">
-                          {wholeBuildings(c.tree.count)}
-                        </span>
-                        <span className="text-xs text-white/50 max-w-[10rem] truncate">{root.name}</span>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5">
+                        {tierFactories.map(({ factory, count }) => {
+                          const needed = wholeBuildings(count);
+                          const built = state.built[factory.guid] ?? 0;
+                          return (
+                            <BuildingRow
+                              key={factory.guid}
+                              factoryGuid={factory.guid}
+                              needed={needed}
+                              built={built}
+                              onSetBuilt={(v) => setBuilt(factory.guid, v)}
+                            />
+                          );
+                        })}
                       </div>
                     </div>
                   );
@@ -304,12 +341,17 @@ export function PopulationView() {
               </div>
             </section>
 
-            {/* Per-tier breakdown */}
-            <section>
-              <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
-                Per-tier consumption breakdown
-              </p>
-              <div className="space-y-2">
+            {/* Drill-down: per-tier consumption with the only useful interactive
+                control (toggle individual needs off/on). Closed by default so the
+                primary view is simply "what to build". */}
+            <details className="group">
+              <summary className="cursor-pointer list-none">
+                <span className="text-xs font-semibold uppercase tracking-widest text-white/30 hover:text-white/60 transition-colors flex items-center gap-1.5">
+                  <ChevronRight size={12} className="group-open:rotate-90 transition-transform" />
+                  Adjust which needs you're meeting
+                </span>
+              </summary>
+              <div className="mt-3 space-y-2">
                 {breakdowns.map(b => (
                   <TierCard
                     key={b.tier}
@@ -331,7 +373,7 @@ export function PopulationView() {
                   />
                 ))}
               </div>
-            </section>
+            </details>
 
             {globals.fertilities.size > 0 && (
               <section>
@@ -438,18 +480,67 @@ function TierCard({
   );
 }
 
-function Stat({
-  icon, label, value, unit, color,
-}: { icon: React.ReactNode; label: string; value: string; unit?: string; color: string }) {
+/**
+ * One row in the buildings list. Click the count to mark all built; use the
+ * +/− steppers for partial progress (e.g. "I've built 1 of 3 Salt Ponds").
+ * Once `built >= needed` the row is dimmed and struck through so it falls
+ * into the visual background and the user's eye is drawn to what's left.
+ */
+function BuildingRow({
+  factoryGuid, needed, built, onSetBuilt,
+}: {
+  factoryGuid: number;
+  needed: number;
+  built: number;
+  onSetBuilt: (next: number) => void;
+}) {
+  const factory = FACTORIES[factoryGuid];
+  const fert = factory.fertility ? FERTILITIES[factory.fertility] : null;
+  const done = built >= needed;
   return (
-    <div className="bg-white/[0.04] border border-white/10 rounded-xl p-3">
-      <p className="text-[11px] uppercase tracking-widest text-white/30 flex items-center gap-1">
-        {icon} {label}
-      </p>
-      <p className={`text-xl font-bold mt-1 tabular-nums ${color}`}>
-        {value}
-        {unit && <span className="text-xs text-white/40 font-normal"> {unit}</span>}
-      </p>
+    <div
+      className={`group rounded-lg border flex items-center gap-2 px-2 py-1.5 transition-colors ${
+        done
+          ? 'bg-emerald-500/[0.04] border-emerald-400/15'
+          : 'bg-white/[0.04] border-white/10 hover:border-white/20'
+      }`}
+    >
+      <button
+        onClick={() => onSetBuilt(done ? 0 : needed)}
+        title={done ? 'Mark as not built' : 'Mark all built'}
+        className={`shrink-0 w-7 h-7 rounded-md border flex items-center justify-center transition-colors ${
+          done
+            ? 'bg-emerald-400/20 border-emerald-400/40 text-emerald-200'
+            : 'border-white/15 text-white/30 hover:text-white hover:border-white/40'
+        }`}
+      >
+        {done ? '✓' : ''}
+      </button>
+      <div className="flex-1 min-w-0">
+        <p className={`text-sm truncate leading-tight ${done ? 'line-through text-white/35' : 'text-white'}`}>
+          {factory.name}
+        </p>
+        {fert && (
+          <p className={`text-[10px] truncate leading-tight ${done ? 'text-amber-300/30' : 'text-amber-300/80'}`}>
+            <MapPin size={9} className="inline -mt-0.5 mr-0.5" />
+            {fert.name}
+          </p>
+        )}
+      </div>
+      <div className={`flex items-center gap-1 shrink-0 ${done ? 'opacity-50' : ''}`}>
+        <button
+          onClick={() => onSetBuilt(Math.max(0, built - 1))}
+          disabled={built === 0}
+          className="w-5 h-5 rounded text-white/30 hover:text-white hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed text-sm leading-none"
+        >−</button>
+        <span className={`text-sm font-bold tabular-nums w-12 text-center ${done ? 'text-emerald-300' : 'text-white'}`}>
+          {built}/{needed}
+        </span>
+        <button
+          onClick={() => onSetBuilt(built + 1)}
+          className="w-5 h-5 rounded text-white/30 hover:text-white hover:bg-white/10 text-sm leading-none"
+        >+</button>
+      </div>
     </div>
   );
 }
