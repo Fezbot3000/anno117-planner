@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Workflow, Map } from 'lucide-react';
+import { Workflow, Map, Users } from 'lucide-react';
 import { GoodsView } from './components/GoodsView';
 import { IslandsView } from './components/IslandsView';
+import { PopulationView } from './components/PopulationView';
 
-type Tab = 'goods' | 'islands';
+type Tab = 'goods' | 'population' | 'islands';
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('goods');
@@ -20,6 +21,9 @@ export default function App() {
           <TabButton active={tab === 'goods'} onClick={() => setTab('goods')} icon={<Workflow size={14} />}>
             Goods
           </TabButton>
+          <TabButton active={tab === 'population'} onClick={() => setTab('population')} icon={<Users size={14} />}>
+            Population
+          </TabButton>
           <TabButton active={tab === 'islands'} onClick={() => setTab('islands')} icon={<Map size={14} />}>
             Islands
           </TabButton>
@@ -27,7 +31,9 @@ export default function App() {
         <p className="text-[11px] text-white/25">data v2025-11-21</p>
       </header>
 
-      {tab === 'goods' ? <GoodsView /> : <IslandsView />}
+      {tab === 'goods' && <GoodsView />}
+      {tab === 'population' && <PopulationView />}
+      {tab === 'islands' && <IslandsView />}
     </div>
   );
 }

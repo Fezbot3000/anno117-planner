@@ -114,14 +114,21 @@ const residences = p.residenceBuildings.map(r => ({
   needs: (r.needsList ?? []).map(n => ({ need: n.need, rate: n.needConsumptionRate })),
 }));
 
-// Needs map (need GUID → product GUID, from p.needs)
+// Needs map. The game stores needs separately from the goods they consume.
+// `needProduct` is the product GUID consumed (null for service / non-good needs
+// like Faith and Entertainment). `needAttributes.Population` is how many
+// residents this need contributes to a residence when satisfied — total
+// residence capacity is the sum of these across all met needs.
 const needs = {};
 for (const n of p.needs ?? []) {
   needs[n.guid] = {
     guid: n.guid,
     name: n.locaText?.english ?? n.name,
-    product: n.product ?? null,
-    isLifestyle: !!n.isLifestyleNeed,
+    product: n.needProduct ?? null,
+    category: n.needCategory ?? null,
+    population: n.needAttributes?.Population ?? 0,
+    happiness: n.needAttributes?.Happiness ?? 0,
+    isBuilding: !!n.isBuilding,
   };
 }
 
@@ -192,8 +199,14 @@ export interface Residence {
 export interface Need {
   guid: number;
   name: string;
+  /** GUID of the product consumed; null for non-good needs (e.g. Faith). */
   product: number | null;
-  isLifestyle: boolean;
+  /** "Food", "Drink", "Clothing", "Hygiene", "Faith", "Entertainment", etc. */
+  category: string | null;
+  /** Residents added to a residence when this need is met. */
+  population: number;
+  happiness: number;
+  isBuilding: boolean;
 }
 
 export const PRODUCTS: Record<number, Product> = ${JSON.stringify(products, null, 2)};

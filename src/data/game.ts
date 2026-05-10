@@ -64,8 +64,14 @@ export interface Residence {
 export interface Need {
   guid: number;
   name: string;
+  /** GUID of the product consumed; null for non-good needs (e.g. Faith). */
   product: number | null;
-  isLifestyle: boolean;
+  /** "Food", "Drink", "Clothing", "Hygiene", "Faith", "Entertainment", etc. */
+  category: string | null;
+  /** Residents added to a residence when this need is met. */
+  population: number;
+  happiness: number;
+  isBuilding: boolean;
 }
 
 export const PRODUCTS: Record<number, Product> = {
@@ -6246,488 +6252,731 @@ export const NEEDS: Record<number, Need> = {
   "2665": {
     "guid": 2665,
     "name": "Need Roman Food Sardines",
-    "product": null,
-    "isLifestyle": false
+    "product": 2088,
+    "category": "Food",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2668": {
     "guid": 2668,
     "name": "Need Roman Food Porridge",
-    "product": null,
-    "isLifestyle": false
+    "product": 2136,
+    "category": "Food",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2689": {
     "guid": 2689,
     "name": "Need Roman Food Bread",
-    "product": null,
-    "isLifestyle": false
+    "product": 2137,
+    "category": "Food",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2690": {
     "guid": 2690,
     "name": "Need Roman Food Wine",
-    "product": null,
-    "isLifestyle": false
+    "product": 2138,
+    "category": "Food",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": false
   },
   "2746": {
     "guid": 2746,
     "name": "Need Roman Food Garum",
-    "product": null,
-    "isLifestyle": false
+    "product": 2139,
+    "category": "Food",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": false
   },
   "2747": {
     "guid": 2747,
     "name": "Need Roman Food Cheese",
-    "product": null,
-    "isLifestyle": false
+    "product": 2153,
+    "category": "Food",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2748": {
     "guid": 2748,
     "name": "Need Roman Food Oysters with Caviar",
-    "product": null,
-    "isLifestyle": false
+    "product": 2140,
+    "category": "Food",
+    "population": 3,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2749": {
     "guid": 2749,
     "name": "Need Roman Food Bird Tongues",
-    "product": null,
-    "isLifestyle": false
+    "product": 2155,
+    "category": "Food",
+    "population": 0,
+    "happiness": -2,
+    "isBuilding": false
   },
   "2750": {
     "guid": 2750,
     "name": "Need Roman Public Market",
-    "product": null,
-    "isLifestyle": false
+    "product": 2671,
+    "category": "Public",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2751": {
     "guid": 2751,
     "name": "Need Roman Public Tavern",
-    "product": null,
-    "isLifestyle": false
+    "product": 2677,
+    "category": "Public",
+    "population": 1,
+    "happiness": 1,
+    "isBuilding": true
   },
   "2752": {
     "guid": 2752,
     "name": "Need Roman Public Library",
-    "product": null,
-    "isLifestyle": false
+    "product": 2678,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2753": {
     "guid": 2753,
     "name": "Need Roman Public Sanctuary",
-    "product": null,
-    "isLifestyle": false
+    "product": 2679,
+    "category": "Public",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": true
   },
   "2754": {
     "guid": 2754,
     "name": "Need Roman Public Grammaticus",
-    "product": null,
-    "isLifestyle": false
+    "product": 2680,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2755": {
     "guid": 2755,
     "name": "Need Roman Wonder Forum",
-    "product": null,
-    "isLifestyle": false
+    "product": 2681,
+    "category": "Wonders",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2756": {
     "guid": 2756,
     "name": "Need Roman Public Theater",
-    "product": null,
-    "isLifestyle": false
+    "product": 2683,
+    "category": "Public",
+    "population": 0,
+    "happiness": 3,
+    "isBuilding": true
   },
   "2759": {
     "guid": 2759,
     "name": "Need Roman Public Temple",
-    "product": null,
-    "isLifestyle": false
+    "product": 2684,
+    "category": "Public",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2768": {
     "guid": 2768,
     "name": "Need Roman Fashion Tunics",
-    "product": null,
-    "isLifestyle": false
+    "product": 2141,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2769": {
     "guid": 2769,
     "name": "Need Roman Fashion Hats",
-    "product": null,
-    "isLifestyle": false
+    "product": 2142,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": false
   },
   "2770": {
     "guid": 2770,
     "name": "Need Roman Fashion Soap",
-    "product": null,
-    "isLifestyle": false
+    "product": 2143,
+    "category": "Fashion",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2771": {
     "guid": 2771,
     "name": "Need Roman Fashion Sandals",
-    "product": null,
-    "isLifestyle": false
+    "product": 2144,
+    "category": "Fashion",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2772": {
     "guid": 2772,
     "name": "Need Roman Fashion Togas",
-    "product": null,
-    "isLifestyle": false
+    "product": 2145,
+    "category": "Fashion",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2773": {
     "guid": 2773,
     "name": "Need Roman Fashion Brooches",
-    "product": null,
-    "isLifestyle": false
+    "product": 2156,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2774": {
     "guid": 2774,
     "name": "Need Roman Fashion Necklaces",
-    "product": null,
-    "isLifestyle": false
+    "product": 2146,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2775": {
     "guid": 2775,
     "name": "Need Roman Fashion Cloaks",
-    "product": null,
-    "isLifestyle": false
+    "product": 2161,
+    "category": "Fashion",
+    "population": 2,
+    "happiness": 2,
+    "isBuilding": false
   },
   "2776": {
     "guid": 2776,
     "name": "Need Roman Household Loungers",
-    "product": null,
-    "isLifestyle": false
+    "product": 2147,
+    "category": "Household",
+    "population": 1,
+    "happiness": 1,
+    "isBuilding": false
   },
   "2777": {
     "guid": 2777,
     "name": "Need Roman Household Amphorae",
-    "product": null,
-    "isLifestyle": false
+    "product": 31700,
+    "category": "Household",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2778": {
     "guid": 2778,
     "name": "Need Roman Household Olive Oil",
-    "product": null,
-    "isLifestyle": false
+    "product": 2149,
+    "category": "Household",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2779": {
     "guid": 2779,
     "name": "Need Roman Household Wax Tablets",
-    "product": null,
-    "isLifestyle": false
+    "product": 2150,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2780": {
     "guid": 2780,
     "name": "Need Roman Household Fine Glass",
-    "product": null,
-    "isLifestyle": false
+    "product": 2151,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2781": {
     "guid": 2781,
     "name": "Need Roman Culture Chariots",
-    "product": null,
-    "isLifestyle": false
+    "product": 2163,
+    "category": "Culture",
+    "population": 0,
+    "happiness": 2,
+    "isBuilding": false
   },
   "2782": {
     "guid": 2782,
     "name": "Need Roman Wonder Baths",
-    "product": null,
-    "isLifestyle": false
+    "product": 2685,
+    "category": "Wonders",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "2783": {
     "guid": 2783,
     "name": "Need Roman Wonder Colosseum",
-    "product": null,
-    "isLifestyle": false
+    "product": 2686,
+    "category": "Wonders",
+    "population": 3,
+    "happiness": 3,
+    "isBuilding": true
   },
   "2784": {
     "guid": 2784,
     "name": "Need Roman Household Mirrors",
-    "product": null,
-    "isLifestyle": false
+    "product": 2162,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "2785": {
     "guid": 2785,
     "name": "Need Roman Culture Lyres",
-    "product": null,
-    "isLifestyle": false
+    "product": 2166,
+    "category": "Culture",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6424": {
     "guid": 6424,
     "name": "Need Roman Celtic Food Eels",
-    "product": null,
-    "isLifestyle": false
+    "product": 2108,
+    "category": "Food",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6429": {
     "guid": 6429,
     "name": "Need Celtic Food Cockles",
-    "product": null,
-    "isLifestyle": false
+    "product": 2097,
+    "category": "Food",
+    "population": 1,
+    "happiness": 1,
+    "isBuilding": false
   },
   "6430": {
     "guid": 6430,
     "name": "Need Celtic Food Cheese",
-    "product": null,
-    "isLifestyle": false
+    "product": 2153,
+    "category": "Food",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6431": {
     "guid": 6431,
     "name": "Need Celtic Food Beer",
-    "product": null,
-    "isLifestyle": false
+    "product": 2154,
+    "category": "Food",
+    "population": 1,
+    "happiness": 2,
+    "isBuilding": false
   },
   "6432": {
     "guid": 6432,
     "name": "Need Celtic Food Roast Beef",
-    "product": null,
-    "isLifestyle": false
+    "product": 31768,
+    "category": "Food",
+    "population": 3,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6434": {
     "guid": 6434,
     "name": "Need Roman Celtic Food Bread",
-    "product": null,
-    "isLifestyle": false
+    "product": 2137,
+    "category": "Food",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6435": {
     "guid": 6435,
     "name": "Need Roman Celtic Food Sausages",
-    "product": null,
-    "isLifestyle": false
+    "product": 8405,
+    "category": "Food",
+    "population": 2,
+    "happiness": 1,
+    "isBuilding": false
   },
   "6436": {
     "guid": 6436,
     "name": "Need Roman Celtic Food Bird Tongues",
-    "product": null,
-    "isLifestyle": false
+    "product": 2155,
+    "category": "Food",
+    "population": 0,
+    "happiness": -2,
+    "isBuilding": false
   },
   "6437": {
     "guid": 6437,
     "name": "Need Celtic Fashion Reed Shoes",
-    "product": null,
-    "isLifestyle": false
+    "product": 2159,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6438": {
     "guid": 6438,
     "name": "Need Roman Celtic Fashion Tunics",
-    "product": null,
-    "isLifestyle": false
+    "product": 2141,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6439": {
     "guid": 6439,
     "name": "Need Celtic Fashion Trousers",
-    "product": null,
-    "isLifestyle": false
+    "product": 2158,
+    "category": "Fashion",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6440": {
     "guid": 6440,
     "name": "Need Celtic Fashion Pelt Hats",
-    "product": null,
-    "isLifestyle": false
+    "product": 31707,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 2,
+    "isBuilding": false
   },
   "6441": {
     "guid": 6441,
     "name": "Need Celtic Fashion Cloaks",
-    "product": null,
-    "isLifestyle": false
+    "product": 2161,
+    "category": "Fashion",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6442": {
     "guid": 6442,
     "name": "Need Celtic Fashion Torcs",
-    "product": null,
-    "isLifestyle": false
+    "product": 2157,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6443": {
     "guid": 6443,
     "name": "Need Roman Celtic Fashion Brooches",
-    "product": null,
-    "isLifestyle": false
+    "product": 2156,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6444": {
     "guid": 6444,
     "name": "Need Roman Celtic Fashion Soap",
-    "product": null,
-    "isLifestyle": false
+    "product": 2143,
+    "category": "Fashion",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6445": {
     "guid": 6445,
     "name": "Need Roman Celtic Household Mirrors",
-    "product": null,
-    "isLifestyle": false
+    "product": 2162,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6446": {
     "guid": 6446,
     "name": "Need Roman Celtic Fashion Togas",
-    "product": null,
-    "isLifestyle": false
+    "product": 2145,
+    "category": "Fashion",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6449": {
     "guid": 6449,
     "name": "Need Roman Celtic Fashion Wigs",
-    "product": null,
-    "isLifestyle": false
+    "product": 31708,
+    "category": "Fashion",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6452": {
     "guid": 6452,
     "name": "Need Roman Celtic Household Fine Glass",
-    "product": null,
-    "isLifestyle": false
+    "product": 2151,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6453": {
     "guid": 6453,
     "name": "Need Celtic Household Clan Shields",
-    "product": null,
-    "isLifestyle": false
+    "product": 31706,
+    "category": "Household",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": false
   },
   "6454": {
     "guid": 6454,
     "name": "Need Celtic Household Chariots",
-    "product": null,
-    "isLifestyle": false
+    "product": 2163,
+    "category": "Household",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": false
   },
   "6458": {
     "guid": 6458,
     "name": "Need Roman Celtic Wonders Baths",
-    "product": null,
-    "isLifestyle": false
+    "product": 2685,
+    "category": "Wonders",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "6716": {
     "guid": 6716,
     "name": "Need Roman Celtic Public Market",
-    "product": null,
-    "isLifestyle": false
+    "product": 2671,
+    "category": "Public",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": true
   },
   "6718": {
     "guid": 6718,
     "name": "Need Celtic Public Sporting Grounds",
-    "product": null,
-    "isLifestyle": false
+    "product": 6707,
+    "category": "Public",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": true
   },
   "6719": {
     "guid": 6719,
     "name": "Need Celtic Public Town Hall",
-    "product": null,
-    "isLifestyle": false
+    "product": 6708,
+    "category": "Public",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "6720": {
     "guid": 6720,
     "name": "Need Celtic Public Bardic Hall",
-    "product": null,
-    "isLifestyle": false
+    "product": 6709,
+    "category": "Public",
+    "population": 1,
+    "happiness": 1,
+    "isBuilding": true
   },
   "6721": {
     "guid": 6721,
     "name": "Need Roman Celtic Public Fanum",
-    "product": null,
-    "isLifestyle": false
+    "product": 6710,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "6722": {
     "guid": 6722,
     "name": "Need Roman Celtic Wonders Temple",
-    "product": null,
-    "isLifestyle": false
+    "product": 2684,
+    "category": "Wonders",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": true
   },
   "6723": {
     "guid": 6723,
     "name": "Need Roman Celtic Public Grammaticus",
-    "product": null,
-    "isLifestyle": false
+    "product": 2680,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "8423": {
     "guid": 8423,
     "name": "Need Roman Celtic Food Wine",
-    "product": null,
-    "isLifestyle": false
+    "product": 2138,
+    "category": "Food",
+    "population": 0,
+    "happiness": 3,
+    "isBuilding": false
   },
   "31758": {
     "guid": 31758,
     "name": "Gambling House Demand in Latium",
-    "product": null,
-    "isLifestyle": false
+    "product": 31757,
+    "category": "Public",
+    "population": 2,
+    "happiness": -2,
+    "isBuilding": true
   },
   "37175": {
     "guid": 37175,
     "name": "Need Roman Celtic Public Theater",
-    "product": null,
-    "isLifestyle": false
+    "product": 2683,
+    "category": "Public",
+    "population": 0,
+    "happiness": 3,
+    "isBuilding": true
   },
   "37176": {
     "guid": 37176,
     "name": "Gambling House Demand in Albion",
-    "product": null,
-    "isLifestyle": false
+    "product": 31757,
+    "category": "Public",
+    "population": 2,
+    "happiness": -2,
+    "isBuilding": true
   },
   "55946": {
     "guid": 55946,
     "name": "Need Celtic Household Drinking Horns",
-    "product": null,
-    "isLifestyle": false
+    "product": 55954,
+    "category": "Household",
+    "population": 1,
+    "happiness": 2,
+    "isBuilding": false
   },
   "55950": {
     "guid": 55950,
     "name": "Need Celtic Wonders Barrow",
-    "product": null,
-    "isLifestyle": false
+    "product": 55955,
+    "category": "Wonders",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "55951": {
     "guid": 55951,
     "name": "Need Celtic Wonders Sacred Grove",
-    "product": null,
-    "isLifestyle": false
+    "product": 55956,
+    "category": "Wonders",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "55960": {
     "guid": 55960,
     "name": "Need Roman Celtic Household Amphorae",
-    "product": null,
-    "isLifestyle": false
+    "product": 31700,
+    "category": "Household",
+    "population": 2,
+    "happiness": 0,
+    "isBuilding": false
   },
   "55961": {
     "guid": 55961,
     "name": "Need Roman Celtic Household Olive Oil",
-    "product": null,
-    "isLifestyle": false
+    "product": 2149,
+    "category": "Household",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "68747": {
     "guid": 68747,
     "name": "Need Roman Public Cistern",
-    "product": null,
-    "isLifestyle": false
+    "product": 30724,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "68748": {
     "guid": 68748,
     "name": "Need Roman Celtic Public Cistern",
-    "product": null,
-    "isLifestyle": false
+    "product": 30724,
+    "category": "Public",
+    "population": 0,
+    "happiness": 0,
+    "isBuilding": true
   },
   "71187": {
     "guid": 71187,
     "name": "Garum Demand in Albion",
-    "product": null,
-    "isLifestyle": false
+    "product": 2139,
+    "category": "Food",
+    "population": 0,
+    "happiness": 1,
+    "isBuilding": false
   },
   "71188": {
     "guid": 71188,
     "name": "Beer Demand in Latium",
-    "product": null,
-    "isLifestyle": false
+    "product": 2154,
+    "category": "Food",
+    "population": 1,
+    "happiness": 2,
+    "isBuilding": false
   },
   "145223": {
     "guid": 145223,
     "name": "Need Roman Household Idols",
-    "product": null,
-    "isLifestyle": false
+    "product": 145220,
+    "category": "Household",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "145224": {
     "guid": 145224,
     "name": "Need Roman Celtic Household Idols",
-    "product": null,
-    "isLifestyle": false
+    "product": 145220,
+    "category": "Household",
+    "population": 1,
+    "happiness": 0,
+    "isBuilding": false
   },
   "145225": {
     "guid": 145225,
     "name": "Need Roman Boardgames",
-    "product": null,
-    "isLifestyle": false
+    "product": 145221,
+    "category": "Culture",
+    "population": 0,
+    "happiness": 3,
+    "isBuilding": false
   },
   "145226": {
     "guid": 145226,
     "name": "Need Celtic Boardgames",
-    "product": null,
-    "isLifestyle": false
+    "product": 145221,
+    "category": "Household",
+    "population": 0,
+    "happiness": 3,
+    "isBuilding": false
   }
 };
 

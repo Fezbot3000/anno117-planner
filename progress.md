@@ -52,13 +52,29 @@ specific factory per product per island.
       uniquely unlocks (deposits no other island in your plan has).
 - [x] Persisted to localStorage (`anno117-planner.islands.v1`).
 
+## Phase 4 — Population planner (DONE)
+
+- [x] Extractor now captures `Need.needProduct`, `needCategory`, and
+      `needAttributes.Population` (residents-per-house contribution).
+- [x] `src/lib/population.ts` computes residence count and per-need demand from
+      a target population per tier. Math verified against the calculator's
+      `consumption.ts`: amount = residences × needConsumptionRate.
+- [x] `src/components/PopulationView.tsx` — new "Population" tab. Input population
+      per tier, get back:
+      - Total residences and effective population
+      - Production buildings required by good (with chain depth pre-rolled)
+      - Workforce supply (population × tier factor) vs demand from the chains
+      - Per-tier breakdown grouped by need category (Food/Drink/Public/Fashion…)
+        with toggleable needs to model partial satisfaction
+      - Required deposits/fertilities aggregated across the whole economy
+- [x] Persists to localStorage (`anno117-planner.population.v1`).
+
 ## Pending / future work
 
 - [ ] Pin alternative producers per chain (override Charcoal Burner vs Coal Mine).
-- [ ] Show the residence/needs side of the calculation: how many Plebeians can a
-      given upkeep/output support.
 - [ ] Add construction-cost data once we have an authoritative source.
 - [ ] Mobile/narrow viewport polish (current layout is desktop-first).
+- [ ] Surface income (tax revenue) per tier alongside upkeep cost.
 - [ ] Recompute extractor when a new params.js is published.
 
 ## Out-of-scope findings (record only, do not action)
