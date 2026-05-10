@@ -1,13 +1,17 @@
 import { useState } from 'react';
-import { Workflow, Map, Users } from 'lucide-react';
+import { Workflow, Map, Users, Sparkles } from 'lucide-react';
 import { GoodsView } from './components/GoodsView';
 import { IslandsView } from './components/IslandsView';
 import { PopulationView } from './components/PopulationView';
+import { PlanView } from './components/PlanView';
 
-type Tab = 'goods' | 'population' | 'islands';
+// 'plan' is the new progression-planner experience. Kept side-by-side with
+// the existing tabs so the user can compare and we can iterate without
+// breaking the working tool.
+type Tab = 'goods' | 'population' | 'islands' | 'plan';
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('goods');
+  const [tab, setTab] = useState<Tab>('population');
 
   return (
     <div className="flex flex-col h-screen bg-[#0f1117] text-white overflow-hidden">
@@ -27,6 +31,9 @@ export default function App() {
           <TabButton active={tab === 'islands'} onClick={() => setTab('islands')} icon={<Map size={14} />}>
             Islands
           </TabButton>
+          <TabButton active={tab === 'plan'} onClick={() => setTab('plan')} icon={<Sparkles size={14} />}>
+            Plan (new)
+          </TabButton>
         </nav>
         <p className="text-[11px] text-white/25">data v2025-11-21</p>
       </header>
@@ -34,6 +41,7 @@ export default function App() {
       {tab === 'goods' && <GoodsView />}
       {tab === 'population' && <PopulationView />}
       {tab === 'islands' && <IslandsView />}
+      {tab === 'plan' && <PlanView />}
     </div>
   );
 }

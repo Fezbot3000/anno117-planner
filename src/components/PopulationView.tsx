@@ -9,6 +9,9 @@ import {
   type TierPlan, type TierBreakdown, type NeedDemand,
 } from '../lib/population';
 import { buildChain, totalsForChain, wholeBuildings, TIER_ORDER } from '../lib/chain';
+import { gateForUpgrade, evaluateGate, type GateStatus } from '../lib/tierGates';
+import { computeFlows, type FlowEntry } from '../lib/materialFlows';
+import { ChainEditorModal } from './ChainEditorModal';
 
 const TIER_DOT: Record<TierId, string> = {
   liberti: 'bg-emerald-400', plebeians: 'bg-blue-400', equites: 'bg-violet-400',
@@ -59,6 +62,10 @@ const TIERS_BY_REGION: Record<RegionId, TierId[]> = {
 export function PopulationView() {
   const [state, setState] = useState<PopState>(() => loadState());
   const [expanded, setExpanded] = useState<Set<TierId>>(new Set());
+  // Single root-level modal state. Any panel (Material Flows row, Building
+  // row, anything else) calls this with a product + demand to open the
+  // focused chain editor. Centralised so we have one modal, one truth.
+  const [chainModal, setChainModal] = useState<{ productGuid: number; demand: number; kicker?: string } | null>(null);
 
   const update = (patch: Partial<PopState>) => {
     const next = { ...state, ...patch };
@@ -177,6 +184,150 @@ export function PopulationView() {
     totalNeeded += needed;
   }
 
+  /**
+   * Material flows: per-product supply vs demand from EVERY built building
+   * plus the population's final consumption. Surfaces shortfalls when one
+   * input good is consumed by multiple downstream buildings (e.g. Pigs
+   * feeding both Tannery and Renderer).
+   */
+  const flows = useMemo<FlowEntry[]>(
+    () => computeFlows(state.built, breakdowns),
+    [state.built, breakdowns],
+  );
+
+  /**
+   * Build a plain-text snapshot of the user's current planner state and the
+   * key derived numbers so they can paste it into a chat / issue and have
+   * full context. Two sections:
+   *   1. Human-readable summary — what they typed, what they've built, the
+   *      headline workforce and material-flow numbers.
+   *   2. Embedded JSON — the raw localStorage state, so it can be pasted
+   *      back into another browser to reproduce exactly.
+   */
+  const buildExport = (): string => {
+    const lines: string[] = [];
+    lines.push('=== ANNO 117 PLANNER STATE ===');
+    lines.push(`Region: ${region}`);
+    lines.push('');
+    lines.push('Population:');
+    for (const t of tierIds) {
+      const pop = state.populations[t] ?? 0;
+      if (pop > 0) lines.push(`  ${TIERS[t].name}: ${pop}`);
+    }
+    lines.push(`  Total residences: ${totalResidences}`);
+    lines.push('');
+
+    lines.push('Workforce balance:');
+    for (const t of tierIds) {
+      if ((state.populations[t] ?? 0) <= 0) continue;
+      const s = workforceSupply[t] ?? 0;
+      const d = current.workforce[t] ?? 0;
+      lines.push(`  ${TIERS[t].name}: ${s} supply / ${d} employed (${s - d >= 0 ? '+' : ''}${s - d})`);
+    }
+    lines.push('');
+
+    lines.push('Built buildings:');
+    const builtEntries = Object.entries(state.built)
+      .map(([g, n]) => ({ f: FACTORIES[+g], n: n as number }))
+      .filter(e => e.f && e.n > 0)
+      .sort((a, b) => a.f.name.localeCompare(b.f.name));
+    if (builtEntries.length === 0) lines.push('  (none)');
+    for (const e of builtEntries) lines.push(`  ${e.n}× ${e.f.name}`);
+    lines.push('');
+
+    lines.push(`Disabled needs: ${
+      Object.entries(state.disabled).filter(([, v]) => (v?.length ?? 0) > 0)
+        .map(([t, v]) => `${t}=[${(v ?? []).join(',')}]`).join(' ') || '(none)'
+    }`);
+    lines.push('');
+
+    const flowsForExport = flows
+      .filter(f => f.totalSupply > 0.001 || f.totalDemand > 0.001)
+      .sort((a, b) => a.net - b.net);
+    const shortCount = flowsForExport.filter(f => f.net < -0.001).length;
+    lines.push(`Material flows (${shortCount} shortfall${shortCount === 1 ? '' : 's'}, t/min):`);
+    for (const f of flowsForExport) {
+      const name = PRODUCTS[f.productGuid]?.name ?? `#${f.productGuid}`;
+      const tag = f.net < -0.001 ? 'SHORT' : f.net > 0.001 ? 'surplus' : 'ok';
+      lines.push(
+        `  [${tag}] ${name}: supply ${f.totalSupply.toFixed(2)} / demand ${f.totalDemand.toFixed(2)} = ${f.net >= 0 ? '+' : ''}${f.net.toFixed(2)}`,
+      );
+      for (const c of f.supply) lines.push(`      + ${c.count}× ${c.factoryName}  +${c.ratePerMin.toFixed(2)}`);
+      for (const c of f.demand) {
+        const label = c.factoryGuid === 0 ? `${c.factoryName} (${c.count} houses)` : `${c.count}× ${c.factoryName}`;
+        lines.push(`      - ${label}  -${c.ratePerMin.toFixed(2)}`);
+      }
+    }
+    lines.push('');
+    lines.push('--- raw state (for re-import) ---');
+    lines.push(JSON.stringify(state));
+    return lines.join('\n');
+  };
+
+  /** Copy the snapshot to the clipboard, with a tiny confirmation pulse. */
+  const [exportFlash, setExportFlash] = useState<'idle' | 'ok' | 'err'>('idle');
+  const onExport = async () => {
+    const text = buildExport();
+    try {
+      await navigator.clipboard.writeText(text);
+      setExportFlash('ok');
+    } catch {
+      // Fallback: dump into a textarea the user can copy from manually.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); setExportFlash('ok'); }
+      catch { setExportFlash('err'); }
+      finally { document.body.removeChild(ta); }
+    }
+    setTimeout(() => setExportFlash('idle'), 1500);
+  };
+
+  /**
+   * Compute the upgrade gate for each tier-pair. A tier T_{n+1} unlocks iff
+   * the user's enabled needs at T_n meet the verified Anno Union rule
+   * (≥1 need per category in 3 categories for T1→T2; ≥3 points per category
+   * in 4 categories for T2+ → next, where T1=1pt, T2=2pt, T3=3pt).
+   */
+  const tierGates: Partial<Record<TierId, GateStatus | null>> = {};
+  for (let i = 0; i < tierIds.length - 1; i++) {
+    const from = tierIds[i];
+    const to = tierIds[i + 1];
+    const gate = gateForUpgrade(from, to);
+    if (!gate) { tierGates[to] = null; continue; }
+    const fromBreakdown = breakdowns.find(b => b.tier === from);
+    if (!fromBreakdown) { tierGates[to] = null; continue; }
+    const enabled = fromBreakdown.residence.needs
+      .map(n => n.need)
+      .filter(needGuid => !(state.disabled[from] ?? []).includes(needGuid));
+    tierGates[to] = evaluateGate(gate, enabled);
+  }
+
+  /**
+   * Open the chain modal for a given factory. We size the chain by the
+   * demand on its primary output product (from `flows`); if no demand row
+   * exists yet (e.g. brand-new factory the user just clicked) we fall back
+   * to the factory's own per-building output rate so the modal is still
+   * useful for inspection.
+   */
+  const openChainForFactory = (factoryGuid: number) => {
+    const factory = FACTORIES[factoryGuid];
+    if (!factory || factory.outputs.length === 0) return;
+    const primary = factory.outputs[0];
+    const flow = flows.find(f => f.productGuid === primary.product);
+    const demand = flow && flow.totalDemand > 0.001
+      ? flow.totalDemand
+      : (primary.amount * 60) / factory.cycleTime; // fallback: 1 building's worth
+    setChainModal({
+      productGuid: primary.product,
+      demand,
+      kicker: `Chain to feed ${factory.name}`,
+    });
+  };
+
   const setBuilt = (factoryGuid: number, count: number) => {
     const next = { ...state.built };
     if (count <= 0) delete next[factoryGuid];
@@ -213,28 +364,22 @@ export function PopulationView() {
               {tierIds.map((t, idx) => {
                 const tier = TIERS[t];
                 const pop = state.populations[t] ?? 0;
-                // TRADE-OFF: real Anno 117 unlock thresholds (e.g. "Plebeians
-                // unlock at 200 Liberti residents") are NOT in the data dump
-                // — params.js only stores tier GUIDs, not population gates.
-                // Rather than fabricate wiki numbers, we gate purely on
-                // structure: tier N+1 unlocks once tier N has any residents.
-                // The user can override at any time by clicking the lock.
-                // Lock rule: a tier is locked iff the immediately-prior tier
-                // has pop=0 AND this tier has pop=0. So setting Liberti to >0
-                // reveals Plebeians; setting Plebeians to >0 reveals Equites;
-                // etc. Setting this tier to >0 (self-engage) keeps it
-                // unlocked so reducing earlier tiers doesn't yank away
-                // numbers you'd already entered.
+                // Lock rule: real Anno 117 upgrade gate (verified from Anno
+                // Union dev blog; see src/lib/tierGates.ts for source quotes).
+                // A tier is locked iff the previous tier's enabled needs do
+                // NOT satisfy the gate. Self-engagement (pop>0 here) always
+                // overrides — the user is in charge.
                 const prevTier = idx > 0 ? tierIds[idx - 1] : null;
-                const prevPop = prevTier ? (state.populations[prevTier] ?? 0) : 1;
-                const locked = idx > 0 && pop === 0 && prevPop === 0;
+                const gate = tierGates[t] ?? null;
+                const gateMet = !gate || gate.met;
+                const locked = idx > 0 && pop === 0 && !gateMet;
                 if (locked) {
                   return (
                     <button
                       key={t}
                       onClick={() => update({ populations: { ...state.populations, [t]: 1 } })}
                       className="w-full bg-white/[0.02] border border-dashed border-white/10 rounded-xl p-3 text-left hover:border-white/25 hover:bg-white/[0.04] transition-colors group"
-                      title={`Reach the ${TIERS[prevTier!].name} tier first, or click to unlock manually.`}
+                      title={`Satisfy the ${TIERS[prevTier!].name} upgrade gate, or click to unlock manually.`}
                     >
                       <div className="flex items-center gap-2">
                         <span className={`w-2 h-2 rounded-full bg-white/15`} />
@@ -243,9 +388,21 @@ export function PopulationView() {
                           🔒 unlock manually
                         </span>
                       </div>
-                      <p className="text-[11px] text-white/25 mt-1.5 leading-snug">
-                        Reach {TIERS[prevTier!].name} first, or tap to reveal.
-                      </p>
+                      {gate && (
+                        <p className="text-[11px] text-white/30 mt-1.5 leading-snug">
+                          Need {gate.gate.pointsPerCategory} pt
+                          {gate.gate.pointsPerCategory > 1 ? 's' : ''} in
+                          {' '}{gate.missing.length === 0
+                            ? 'every category'
+                            : gate.missing.join(', ')}
+                          {' '}from {TIERS[prevTier!].name}.
+                        </p>
+                      )}
+                      {!gate && (
+                        <p className="text-[11px] text-white/25 mt-1.5 leading-snug">
+                          Set {TIERS[prevTier!].name} population first.
+                        </p>
+                      )}
                     </button>
                   );
                 }
@@ -273,9 +430,10 @@ export function PopulationView() {
               })}
             </div>
             <p className="text-[10px] text-white/25 mt-2 leading-snug">
-              Higher tiers unlock as you start populating the previous one. Real in-game
-              thresholds aren't in our data, so this gates structurally — click any
-              locked tier to reveal it manually.
+              Tiers unlock by satisfying needs at the previous tier — not by population
+              numbers. Anno 117 changed this from older Anno games. T1→T2 needs ≥1 enabled
+              need in 3 categories; T2→T3 needs ≥3 points per category in 4 categories
+              (T1 needs = 1pt, T2 = 2pt). Click any locked tier to override.
             </p>
           </div>
         </div>
@@ -309,14 +467,29 @@ export function PopulationView() {
                   {totalNeeded - totalRemaining} of {totalNeeded} built · {totalResidences} houses · -{current.denarii.toLocaleString()} denarii/min upkeep right now
                 </p>
               </div>
-              {Object.keys(state.built).length > 0 && (
+              <div className="flex items-center gap-2 shrink-0">
                 <button
-                  onClick={() => update({ built: {} })}
-                  className="text-xs text-white/35 hover:text-rose-300 transition-colors px-3 py-1.5 rounded-lg border border-white/10 hover:border-rose-400/40 shrink-0"
+                  onClick={onExport}
+                  className={`text-xs transition-colors px-3 py-1.5 rounded-lg border ${
+                    exportFlash === 'ok'
+                      ? 'text-emerald-200 border-emerald-400/50 bg-emerald-400/10'
+                      : exportFlash === 'err'
+                      ? 'text-rose-200 border-rose-400/50 bg-rose-400/10'
+                      : 'text-white/50 hover:text-white border-white/10 hover:border-white/40'
+                  }`}
+                  title="Copy a full snapshot of your state + computed flows to the clipboard"
                 >
-                  Reset progress
+                  {exportFlash === 'ok' ? 'Copied ✓' : exportFlash === 'err' ? 'Copy failed' : 'Export'}
                 </button>
-              )}
+                {Object.keys(state.built).length > 0 && (
+                  <button
+                    onClick={() => update({ built: {} })}
+                    className="text-xs text-white/35 hover:text-rose-300 transition-colors px-3 py-1.5 rounded-lg border border-white/10 hover:border-rose-400/40"
+                  >
+                    Reset progress
+                  </button>
+                )}
+              </div>
             </header>
 
             {/* Workforce balance — always shown so the user can see their
@@ -423,6 +596,7 @@ export function PopulationView() {
                               needed={needed}
                               built={built}
                               onSetBuilt={(v) => setBuilt(factory.guid, v)}
+                              onOpenChain={() => openChainForFactory(factory.guid)}
                             />
                           );
                         })}
@@ -442,6 +616,18 @@ export function PopulationView() {
               built={state.built}
               suggestedGuids={new Set(Object.keys(suggested.factoryCounts).map(Number))}
               unlockedTiers={new Set(tierIds.filter(t => (state.populations[t] ?? 0) > 0))}
+              onSetBuilt={setBuilt}
+              onOpenChain={openChainForFactory}
+            />
+
+            {/* Material flows — per-good supply vs demand sheet. Aggregates
+                across every built building so shared inputs (e.g. Pigs used
+                by both Tannery and Renderer) appear as one row with the
+                full demand list. Shortfalls float to the top. */}
+            <MaterialFlowsSection
+              flows={flows}
+              region={region}
+              built={state.built}
               onSetBuilt={setBuilt}
             />
 
@@ -504,6 +690,17 @@ export function PopulationView() {
           </div>
         )}
       </main>
+      {chainModal && (
+        <ChainEditorModal
+          productGuid={chainModal.productGuid}
+          region={region}
+          demandPerMin={chainModal.demand}
+          builtCounts={state.built}
+          onSetBuilt={setBuilt}
+          onClose={() => setChainModal(null)}
+          kicker={chainModal.kicker}
+        />
+      )}
     </div>
   );
 }
@@ -585,13 +782,286 @@ function TierCard({
 }
 
 /**
+ * Per-good supply vs demand sheet. Goods with shortfalls (negative net) float
+ * to the top in red. Each row is expandable to show every building that
+ * contributes to the supply or demand on that good — so when the user adds
+ * a second Soap Maker, this is where they see "Pigs: 4 needed, 3 produced".
+ */
+function MaterialFlowsSection({
+  flows, region, built, onSetBuilt,
+}: {
+  flows: FlowEntry[];
+  region: RegionId;
+  built: Record<number, number>;
+  onSetBuilt: (factoryGuid: number, count: number) => void;
+}) {
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  // Modal state — null when closed, otherwise the row the user clicked.
+  // Carries the demand-rate snapshot at click-time so the modal sizes the
+  // chain by the actual current shortfall (not "produce 1 t/min stub").
+  const [modal, setModal] = useState<{ productGuid: number; demand: number } | null>(null);
+
+  /**
+   * Given a product GUID, find every factory in the current region that
+   * outputs it. Ranked by simplest (fewest inputs) first, since for
+   * construction goods the user usually wants the basic producer first.
+   */
+  const producersFor = (productGuid: number) => {
+    return Object.values(FACTORIES)
+      .filter(f =>
+        f.regions.includes(region) &&
+        f.outputs.some(o => o.product === productGuid),
+      )
+      .sort((a, b) => a.inputs.length - b.inputs.length);
+  };
+
+  /**
+   * Inverse of producersFor: factories in the current region that take this
+   * good as an INPUT. Used to surface downstream chains — when the user has
+   * Limestone, they want Concrete Maker one click away. Construction-material
+   * consumers don't show up in the supply/demand sheet on their own (the
+   * planner only tracks ongoing per-minute flows, not one-off building costs)
+   * so this is the only path to discovery in the Material Flows section.
+   */
+  const consumersFor = (productGuid: number) => {
+    return Object.values(FACTORIES)
+      .filter(f =>
+        f.regions.includes(region) &&
+        f.inputs.some(io => io.product === productGuid),
+      )
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  // Hide goods where nothing's happening (no supply, no demand).
+  const visible = flows
+    .filter(f => f.totalSupply > 0.001 || f.totalDemand > 0.001)
+    // Shortfalls first (most negative net), then surpluses, then zero-balance.
+    .sort((a, b) => a.net - b.net);
+
+  if (visible.length === 0) {
+    return (
+      <section>
+        <p className="text-xs font-semibold uppercase tracking-widest text-white/30 mb-3">
+          Material flows
+        </p>
+        <p className="text-xs text-white/30 italic">
+          No buildings or population yet — nothing to balance.
+        </p>
+      </section>
+    );
+  }
+
+  const shortfalls = visible.filter(f => f.net < -0.001).length;
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-semibold uppercase tracking-widest text-white/30">
+          Material flows {shortfalls > 0 && (
+            <span className="ml-2 text-rose-300/80">— {shortfalls} shortfall{shortfalls === 1 ? '' : 's'}</span>
+          )}
+        </p>
+      </div>
+      <div className="space-y-1">
+        {visible.map(f => {
+          const product = PRODUCTS[f.productGuid];
+          const isShort = f.net < -0.001;
+          const isSurplus = f.net > 0.001;
+          // Manually-toggled state takes precedence; otherwise shortfalls AND
+          // surpluses are open by default. Shortfalls expose "+ Build producer"
+          // upstream chips; surpluses expose "+ Used in" downstream chips
+          // (e.g. Limestone surplus → one-click Concrete Maker). Zero-balance
+          // rows stay closed because they're noise.
+          const autoOpen = isShort || isSurplus;
+          const userToggled = expanded.has(f.productGuid);
+          const isOpen = userToggled !== autoOpen;
+          return (
+            <div
+              key={f.productGuid}
+              className={`rounded-lg border transition-colors ${
+                isShort
+                  ? 'bg-rose-500/[0.06] border-rose-400/25'
+                  : isSurplus
+                  ? 'bg-emerald-500/[0.04] border-emerald-400/15'
+                  : 'bg-white/[0.04] border-white/10'
+              }`}
+            >
+              <div className="w-full px-3 py-2 flex items-center gap-3">
+                {/* Chevron toggles the inline producing/consuming detail
+                    panel — kept for power users who want everything visible.
+                    The product name itself opens the focused chain editor
+                    modal where you can set built counts for every factory
+                    in the chain in one place. */}
+                <button
+                  onClick={() => {
+                    const s = new Set(expanded);
+                    if (s.has(f.productGuid)) s.delete(f.productGuid); else s.add(f.productGuid);
+                    setExpanded(s);
+                  }}
+                  className="text-white/40 hover:text-white p-0.5"
+                  aria-label={isOpen ? 'Hide details' : 'Show details'}
+                >
+                  {isOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </button>
+                <button
+                  onClick={() => setModal({
+                    productGuid: f.productGuid,
+                    // Open the modal sized for the FULL demand on this good
+                    // (residents + factory inputs combined). If demand is
+                    // zero (a pure surplus oddity), use 1 t/min as a sane
+                    // floor so the chain is still inspectable.
+                    demand: Math.max(f.totalDemand, 1),
+                  })}
+                  className="text-sm font-semibold text-white flex-1 truncate text-left hover:underline decoration-white/30 underline-offset-2"
+                  title="Open the full chain editor for this good"
+                >
+                  {product?.name ?? `#${f.productGuid}`}
+                </button>
+                <span className="text-[11px] text-white/40 tabular-nums">
+                  supply {f.totalSupply.toFixed(2)} · need {f.totalDemand.toFixed(2)}
+                </span>
+                <span
+                  className={`text-sm font-bold tabular-nums w-20 text-right ${
+                    isShort ? 'text-rose-300' : isSurplus ? 'text-emerald-300' : 'text-white/60'
+                  }`}
+                >
+                  {f.net >= 0 ? '+' : ''}{f.net.toFixed(2)}
+                </span>
+              </div>
+              {isOpen && (
+                <div className="px-4 pb-3 pt-1 border-t border-white/8 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-[11px]">
+                  <div>
+                    <p className="text-emerald-300/80 font-semibold uppercase tracking-wider mb-1">Producing</p>
+                    {f.supply.length === 0 ? (
+                      <p className="text-white/30 italic">Nothing produces this yet.</p>
+                    ) : f.supply.map((c, i) => (
+                      <p key={i} className="text-white/70 flex items-center gap-1.5">
+                        <span className="text-white tabular-nums w-6 inline-block shrink-0">{c.count}×</span>
+                        <span className="flex-1 truncate">{c.factoryName}</span>
+                        <span className="text-white/40 shrink-0">+{c.ratePerMin.toFixed(2)}/min</span>
+                        <button
+                          onClick={() => onSetBuilt(c.factoryGuid, (built[c.factoryGuid] ?? 0) + 1)}
+                          title="Build one more"
+                          className="shrink-0 w-5 h-5 rounded text-white/40 hover:text-white hover:bg-white/10 leading-none"
+                        >+</button>
+                      </p>
+                    ))}
+                    {/* When the good is short, expose every candidate producer
+                        in this region as a one-click chip. Reachability into
+                        construction-material chains (Concrete, Bricks, etc.)
+                        is the main motivator — they're never in the
+                        population-driven plan. */}
+                    {(() => {
+                      if (f.net >= -0.001) return null;
+                      const candidates = producersFor(f.productGuid)
+                        .filter(c => !f.supply.some(s => s.factoryGuid === c.guid));
+                      if (candidates.length === 0) {
+                        return (
+                          <p className="text-rose-300/70 italic mt-1.5 text-[10px]">
+                            No producer in {region} — must be imported from another region.
+                          </p>
+                        );
+                      }
+                      return (
+                        <div className="flex flex-wrap gap-1 mt-2">
+                          {candidates.map(c => (
+                            <button
+                              key={c.guid}
+                              onClick={() => onSetBuilt(c.guid, (built[c.guid] ?? 0) + 1)}
+                              className="text-[10px] px-2 py-1 rounded-md border border-emerald-400/30 bg-emerald-400/5 text-emerald-200 hover:bg-emerald-400/15 hover:border-emerald-400/50 transition-colors"
+                              title={`Add 1× ${c.name}`}
+                            >
+                              + {c.name}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                  <div>
+                    <p className="text-rose-300/80 font-semibold uppercase tracking-wider mb-1">Consuming</p>
+                    {f.demand.length === 0 ? (
+                      <p className="text-white/30 italic">Nothing consumes this.</p>
+                    ) : f.demand.map((c, i) => (
+                      <p key={i} className="text-white/70 flex items-center gap-1.5">
+                        {c.factoryGuid === 0 ? (
+                          <>
+                            <span className="text-white flex-1 truncate">{c.factoryName}</span>
+                            <span className="text-white/40 shrink-0 text-[10px]">{c.count} houses</span>
+                            <span className="text-white/40 shrink-0">−{c.ratePerMin.toFixed(2)}/min</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="text-white tabular-nums w-6 inline-block shrink-0">{c.count}×</span>
+                            <span className="flex-1 truncate">{c.factoryName}</span>
+                            <span className="text-white/40 shrink-0">−{c.ratePerMin.toFixed(2)}/min</span>
+                          </>
+                        )}
+                      </p>
+                    ))}
+                    {/* Downstream-discovery chips. For ANY good — surplus, balanced,
+                        or short — surface every factory in this region that takes
+                        it as input but isn't built yet. This is how Limestone →
+                        Concrete Maker becomes one click instead of "where do I
+                        even find Concrete in this UI". Construction-material
+                        consumers never appear in the demand list on their own
+                        because the planner only tracks per-minute flows, not the
+                        one-off material cost of placing a building. */}
+                    {(() => {
+                      const downstream = consumersFor(f.productGuid)
+                        .filter(c => !f.demand.some(d => d.factoryGuid === c.guid))
+                        .filter(c => (built[c.guid] ?? 0) === 0);
+                      if (downstream.length === 0) return null;
+                      return (
+                        <>
+                          <p className="text-amber-300/70 font-semibold uppercase tracking-wider mt-2 mb-1 text-[10px]">
+                            Used in {f.totalSupply > 0.001 ? '— build to use your surplus' : ''}
+                          </p>
+                          <div className="flex flex-wrap gap-1">
+                            {downstream.map(c => (
+                              <button
+                                key={c.guid}
+                                onClick={() => onSetBuilt(c.guid, (built[c.guid] ?? 0) + 1)}
+                                className="text-[10px] px-2 py-1 rounded-md border border-amber-400/30 bg-amber-400/5 text-amber-200 hover:bg-amber-400/15 hover:border-amber-400/50 transition-colors"
+                                title={`Add 1× ${c.name}`}
+                              >
+                                + {c.name}
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {modal && (
+        <ChainEditorModal
+          productGuid={modal.productGuid}
+          region={region}
+          demandPerMin={modal.demand}
+          builtCounts={built}
+          onSetBuilt={onSetBuilt}
+          onClose={() => setModal(null)}
+          kicker={`Chain for ${PRODUCTS[modal.productGuid]?.name ?? '?'}`}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
  * Section listing buildings the user has placed that aren't part of the
  * population-driven suggested plan — typically construction-material chains
  * (lumber, bricks, marble), defense, or anything else they want to factor
  * into workforce/upkeep totals. Includes a searchable picker to add more.
  */
 function CustomBuildingsSection({
-  region, built, suggestedGuids, unlockedTiers, onSetBuilt,
+  region, built, suggestedGuids, unlockedTiers, onSetBuilt, onOpenChain,
 }: {
   region: RegionId;
   built: Record<number, number>;
@@ -599,6 +1069,7 @@ function CustomBuildingsSection({
   /** Tiers with pop > 0 — used to gate which workforce-tied buildings can be added. */
   unlockedTiers: Set<TierId>;
   onSetBuilt: (factoryGuid: number, count: number) => void;
+  onOpenChain?: (factoryGuid: number) => void;
 }) {
   const [picking, setPicking] = useState(false);
   const [query, setQuery] = useState('');
@@ -706,6 +1177,7 @@ function CustomBuildingsSection({
                       factoryGuid={g}
                       needed={0}
                       built={built[g] ?? 0}
+                      onOpenChain={onOpenChain ? () => onOpenChain(g) : undefined}
                       onSetBuilt={(v) => onSetBuilt(g, v)}
                     />
                   ))}
@@ -726,13 +1198,15 @@ function CustomBuildingsSection({
  * into the visual background and the user's eye is drawn to what's left.
  */
 function BuildingRow({
-  factoryGuid, needed, built, onSetBuilt,
+  factoryGuid, needed, built, onSetBuilt, onOpenChain,
 }: {
   factoryGuid: number;
   /** 0 means "no target — this is a custom-tracked building". */
   needed: number;
   built: number;
   onSetBuilt: (next: number) => void;
+  /** Click the building name → open its full supply chain in a modal. */
+  onOpenChain?: () => void;
 }) {
   const factory = FACTORIES[factoryGuid];
   const fert = factory.fertility ? FERTILITIES[factory.fertility] : null;
@@ -760,8 +1234,13 @@ function BuildingRow({
       >
         {done || (!hasTarget && built > 0) ? '✓' : ''}
       </button>
-      <div className="flex-1 min-w-0">
-        <p className={`text-sm truncate leading-tight ${done ? 'line-through text-white/35' : 'text-white'}`}>
+      <button
+        onClick={onOpenChain}
+        disabled={!onOpenChain}
+        className="flex-1 min-w-0 text-left disabled:cursor-default"
+        title={onOpenChain ? 'Open the full supply chain for this building' : undefined}
+      >
+        <p className={`text-sm truncate leading-tight ${done ? 'line-through text-white/35' : 'text-white'} ${onOpenChain ? 'group-hover:underline decoration-white/30 underline-offset-2' : ''}`}>
           {factory.name}
         </p>
         {fert && (
@@ -770,7 +1249,7 @@ function BuildingRow({
             {fert.name}
           </p>
         )}
-      </div>
+      </button>
       <div className={`flex items-center gap-1 shrink-0 ${done ? 'opacity-50' : ''}`}>
         <button
           onClick={() => onSetBuilt(Math.max(0, built - 1))}
